@@ -1,6 +1,8 @@
 from flask import Flask, render_template, send_file, request, abort, jsonify
 import os
 from pathlib import Path
+import zipfile
+import plistlib
 
 app = Flask(__name__)
 
@@ -10,6 +12,19 @@ CERTS_DIR = BASE_DIR / 'certs'
 
 IPAS_DIR.mkdir(exist_ok=True)
 CERTS_DIR.mkdir(exist_ok=True)
+
+def get_bundle_id_from_ipa(ipa_path):
+    """IPAからBundle IDを抽出"""
+    try:
+        with zipfile.ZipFile(ipa_path, 'r') as z:
+            for name in z.namelist():
+                if name.endswith('.app/Info.plist'):
+                    with z.open(name) as f:
+                        plist = plistlib.load(f)
+                        return plist.get('CFBundleIdentifier', 'com.example.app')
+    except Exception:
+        pass
+    return 'com.example.app'
 
 @app.route('/')
 def index():
@@ -22,13 +37,15 @@ def list_files():
         if IPAS_DIR.exists():
             for f in IPAS_DIR.iterdir():
                 if f.is_file() and f.suffix.lower() == '.ipa':
-                    # HTTPSを強制してOTAインストールリンクを生成
                     host = request.host_url.rstrip('/')
                     if host.startswith('http://'):
                         host = host.replace('http://', 'https://')
                     
+                    bundle_id = get_bundle_id_from_ipa(f)
+                    
                     ipas.append({
                         'name': f.name,
+                        'bundle_id': bundle_id,
                         'install_url': f"itms-services://?action=download-manifest&url={host}/manifest/{f.name}",
                         'download_url': f"/api/{f.name}"
                     })
@@ -69,46 +86,36 @@ def manifest(filename):
     if '..' in filename or not filename.lower().endswith('.ipa'):
         abort(403)
     
+    filepath = IPAS_DIR / filename
+    if not filepath.exists():
+        abort(404)
+    
+    bundle_id = get_bundle_id_from_ipa(filepath)
+    title = filename.replace('.ipa', '')
+    
     host = request.host_url.rstrip('/')
     if host.startswith('http://'):
         host = host.replace('http://', 'https://')
         
     ipa_url = f"{host}/api/{filename}"
-    title = filename.replace('.ipa', '')
     
-    plist = f'''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>items</key>
-  <array>
-    <dict>
-      <key>assets</key>
-      <array>
-        <dict>
-          <key>kind</key>
-          <string>software-package</string>
-          <key>url</key>
-          <string>{ipa_url}</string>
-        </dict>
-      </array>
-      <key>metadata</key>
-      <dict>
-        <key>bundle-identifier</key>
-        <string>com.example.app</string>
-        <key>bundle-version</key>
-        <string>1.0</string>
-        <key>kind</key>
-        <string>software</string>
-        <key>title</key>
-        <string>{title}</string>
-      </dict>
-    </dict>
-  </array>
-</dict>
-</plist>'''
-    # Content-Type を厳密に指定
-    return plist, 200, {'Content-Type': 'application/xml; charset=utf-8'}
+    plist_dict = {
+        'items': [{
+            'assets': [{
+                'kind': 'software-package',
+                'url': ipa_url
+            }],
+            'metadata': {
+                'bundle-identifier': bundle_id,
+                'bundle-version': '1.0',
+                'kind': 'software',
+                'title': title
+            }
+        }]
+    }
+    
+    plist_data = plistlib.dumps(plist_dict)
+    return plist_data, 200, {'Content-Type': 'application/xml; charset=utf-8'}
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
