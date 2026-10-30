@@ -3,28 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Signing Files</title>
+  <title>IPA Installer</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f7; color: #1d1d1f; }
     h1 { text-align: center; margin-bottom: 30px; font-size: 24px; }
-    h2 { border-bottom: 2px solid #007aff; padding-bottom: 8px; margin-top: 30px; color: #007aff; font-size: 18px; }
-    .file-item { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; }
-    .file-name { font-weight: 600; font-size: 15px; word-break: break-all; color: #333; }
-    .btn { display: block; text-align: center; padding: 14px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 16px; transition: opacity 0.2s; }
+    .file-item { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .file-name { font-weight: 600; font-size: 15px; word-break: break-all; color: #333; margin-bottom: 10px; }
+    .btn { display: block; text-align: center; padding: 14px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 16px; transition: opacity 0.2s; border: none; cursor: pointer; width: 100%; }
     .btn:active { opacity: 0.7; }
     .btn-install { background-color: #34c759; color: #fff; }
-    .btn-download { background-color: #007aff; color: #fff; }
+    .btn:disabled { background-color: #ccc; }
+    .log-container { background: #1e1e1e; color: #00ff00; border-radius: 8px; padding: 12px; margin-top: 20px; font-family: 'Courier New', monospace; font-size: 11px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
     .loading { text-align: center; color: #86868b; padding: 20px; }
   </style>
 </head>
 <body>
-  <h1>Signing Files</h1>
-  
-  <h2>IPA Files</h2>
+  <h1>IPA Installer</h1>
   <div id="ipa-list" class="loading">読み込み中...</div>
-
-  <h2>Certificates</h2>
-  <div id="cert-list" class="loading">読み込み中...</div>
+  <div id="log-container" class="log-container" style="display:none;"></div>
 
   <script>
     async function loadFiles() {
@@ -35,41 +31,75 @@
 
         const ipaList = document.getElementById('ipa-list');
         ipaList.innerHTML = '';
-        if (data.ipas.length === 0) {
-          ipaList.innerHTML = '<p class="loading">ファイルはありません</p>';
-        } else {
-          data.ipas.forEach(file => {
-            const div = document.createElement('div');
-            div.className = 'file-item';
-            div.innerHTML = `
-              <div class="file-name">${file.name}</div>
-              <a href="${file.install_url}" class="btn btn-install">📲 インストール</a>
-              <a href="${file.download_url}" class="btn btn-download" download>⬇️ ダウンロード</a>
-            `;
-            ipaList.appendChild(div);
-          });
+        
+        if (!data.ipas || data.ipas.length === 0) {
+          ipaList.innerHTML = '<p class="loading">IPA ファイルがありません</p>';
+          return;
         }
 
-        const certList = document.getElementById('cert-list');
-        certList.innerHTML = '';
-        if (data.certs.length === 0) {
-          certList.innerHTML = '<p class="loading">ファイルはありません</p>';
-        } else {
-          data.certs.forEach(file => {
-            const div = document.createElement('div');
-            div.className = 'file-item';
-            div.innerHTML = `
-              <div class="file-name">${file.name}</div>
-              <a href="${file.download_url}" class="btn btn-download" download>⬇️ 署名 ダウンロード</a>
-            `;
-            certList.appendChild(div);
-          });
-        }
+        data.ipas.forEach(file => {
+          const div = document.createElement('div');
+          div.className = 'file-item';
+          div.innerHTML = `
+            <div class="file-name">${file.name}</div>
+            <button class="btn btn-install" id="btn-${file.name}" onclick="installIPA('${file.name}')">📲 インストール（署名実行）</button>
+          `;
+          ipaList.appendChild(div);
+        });
       } catch (error) {
-        console.error('Error:', error);
-        document.getElementById('ipa-list').innerHTML = '<p class="loading" style="color:red;">読み込みエラー</p>';
+        document.getElementById('ipa-list').innerHTML = '<p class="loading" style="color:red;">読み込みエラー: API応答なし</p>';
       }
     }
+
+    async function installIPA(filename) {
+      const btn = document.getElementById(`btn-${filename}`);
+      const logContainer = document.getElementById('log-container');
+      
+      btn.textContent = '⏳ 署名処理中...';
+      btn.disabled = true;
+      logContainer.style.display = 'block';
+      logContainer.innerHTML = '処理を開始しています...\n';
+      
+      // ポーリングでログを取得
+      const logInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/logs');
+          const data = await res.json();
+          if (data.logs) {
+            logContainer.innerHTML = data.logs.join('');
+            logContainer.scrollTop = logContainer.scrollHeight;
+          }
+        } catch (e) {}
+      }, 1000);
+
+      try {
+        const response = await fetch(`/install/${filename}`);
+        const data = await response.json();
+        
+        clearInterval(logInterval);
+        
+        // 最終ログ取得
+        const finalRes = await fetch('/api/logs');
+        const finalData = await finalRes.json();
+        if (finalData.logs) {
+            logContainer.innerHTML = finalData.logs.join('');
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        if (data.manifest_url) {
+          btn.textContent = '✅ iOSインストールへ遷移';
+          setTimeout(() => { window.location.href = data.manifest_url; }, 1000);
+        } else {
+          btn.textContent = '❌ 署名失敗';
+          logContainer.innerHTML += '\n[ERROR] 署名に失敗しました。ログを確認してください。';
+        }
+      } catch (error) {
+        clearInterval(logInterval);
+        btn.textContent = '❌ エラー';
+        logContainer.innerHTML += '\n[ERROR] サーバーとの通信が切断されました。';
+      }
+    }
+
     loadFiles();
   </script>
 </body>
