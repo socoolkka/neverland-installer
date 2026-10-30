@@ -2,5 +2,11 @@ services:
   - type: web
     name: signing-server
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      apt-get update
+      apt-get install -y git g++ make libssl-dev zip unzip
+      git clone https://github.com/zhlynn/zsign.git
+      cd zsign && make
+      cd ..
+      pip install -r requirements.txt
     startCommand: gunicorn app:app
