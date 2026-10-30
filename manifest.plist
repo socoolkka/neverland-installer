@@ -17,7 +17,7 @@
       <key>metadata</key>
       <dict>
         <key>bundle-identifier</key>
-        <string>REPLACE_WITH_YOUR_APP_BUNDLE_ID</string>
+        <string>lol.neverland.buttonapp</string>
         <key>bundle-version</key>
         <string>1.0</string>
         <key>kind</key>
