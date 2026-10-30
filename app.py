@@ -4,10 +4,12 @@ from pathlib import Path
 
 app = Flask(__name__)
 
-BASE_DIR = Path(__file__).parent
+# ベースディレクトリの取得（Render環境でも確実に動作させる）
+BASE_DIR = Path(__file__).parent.resolve()
 IPAS_DIR = BASE_DIR / 'ipas'
 CERTS_DIR = BASE_DIR / 'certs'
 
+# ディレクトリが存在しない場合は作成
 IPAS_DIR.mkdir(exist_ok=True)
 CERTS_DIR.mkdir(exist_ok=True)
 
@@ -17,30 +19,34 @@ def index():
 
 @app.route('/api/files')
 def list_files():
-    ipas = []
-    if IPAS_DIR.exists():
-        for f in IPAS_DIR.iterdir():
-            if f.suffix == '.ipa':
-                ipas.append({
-                    'name': f.name,
-                    'install_url': f"itms-services://?action=download-manifest&url={request.host_url.rstrip('/')}/manifest/{f.name}",
-                    'download_url': f"/api/{f.name}"
-                })
-    
-    certs = []
-    if CERTS_DIR.exists():
-        for f in CERTS_DIR.iterdir():
-            if f.suffix in ['.p12', '.mobileprovision']:
-                certs.append({
-                    'name': f.name,
-                    'download_url': f"/api/cert/{f.name}"
-                })
-                
-    return jsonify({'ipas': ipas, 'certs': certs})
+    try:
+        ipas = []
+        if IPAS_DIR.exists():
+            for f in IPAS_DIR.iterdir():
+                if f.is_file() and f.suffix == '.ipa':
+                    ipas.append({
+                        'name': f.name,
+                        'install_url': f"{request.host_url.rstrip('/')}/manifest/{f.name}",
+                        'download_url': f"/api/{f.name}"
+                    })
+        
+        certs = []
+        if CERTS_DIR.exists():
+            for f in CERTS_DIR.iterdir():
+                if f.is_file() and f.suffix in ['.p12', '.mobileprovision']:
+                    certs.append({
+                        'name': f.name,
+                        'download_url': f"/api/cert/{f.name}"
+                    })
+                    
+        return jsonify({'ipas': ipas, 'certs': certs})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/<filename>')
 def serve_ipa(filename):
-    if not filename.endswith('.ipa'):
+    # セキュリティ: パストラバーサル防止
+    if '..' in filename or not filename.endswith('.ipa'):
         abort(403)
     filepath = IPAS_DIR / filename
     if not filepath.exists():
@@ -49,7 +55,7 @@ def serve_ipa(filename):
 
 @app.route('/api/cert/<filename>')
 def serve_cert(filename):
-    if not (filename.endswith('.p12') or filename.endswith('.mobileprovision')):
+    if '..' in filename or not (filename.endswith('.p12') or filename.endswith('.mobileprovision')):
         abort(403)
     filepath = CERTS_DIR / filename
     if not filepath.exists():
@@ -58,7 +64,7 @@ def serve_cert(filename):
 
 @app.route('/manifest/<filename>')
 def manifest(filename):
-    if not filename.endswith('.ipa'):
+    if '..' in filename or not filename.endswith('.ipa'):
         abort(403)
     
     host_url = request.host_url.rstrip('/')
