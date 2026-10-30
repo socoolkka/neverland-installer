@@ -1,8 +1,8 @@
 from flask import Flask, render_template, send_file, request, abort, jsonify
 import os
-from pathlib import Path
 import zipfile
 import plistlib
+from pathlib import Path
 
 app = Flask(__name__)
 
@@ -14,17 +14,18 @@ IPAS_DIR.mkdir(exist_ok=True)
 CERTS_DIR.mkdir(exist_ok=True)
 
 def get_bundle_id_from_ipa(ipa_path):
-    """IPAからBundle IDを抽出"""
+    """IPAファイルからBundle IDを抽出。失敗時は既定値を返す"""
     try:
-        with zipfile.ZipFile(ipa_path, 'r') as z:
-            for name in z.namelist():
+        with zipfile.ZipFile(ipa_path, 'r') as zip_ref:
+            for name in zip_ref.namelist():
                 if name.endswith('.app/Info.plist'):
-                    with z.open(name) as f:
-                        plist = plistlib.load(f)
-                        return plist.get('CFBundleIdentifier', 'com.example.app')
+                    with zip_ref.open(name) as plist_file:
+                        plist_data = plistlib.load(plist_file)
+                        return plist_data.get('CFBundleIdentifier', 'lol.neverland.buttonapp')
     except Exception:
         pass
-    return 'com.example.app'
+    # 抽出に失敗した場合の確実なフォールバック
+    return 'lol.neverland.buttonapp'
 
 @app.route('/')
 def index():
@@ -41,11 +42,8 @@ def list_files():
                     if host.startswith('http://'):
                         host = host.replace('http://', 'https://')
                     
-                    bundle_id = get_bundle_id_from_ipa(f)
-                    
                     ipas.append({
                         'name': f.name,
-                        'bundle_id': bundle_id,
                         'install_url': f"itms-services://?action=download-manifest&url={host}/manifest/{f.name}",
                         'download_url': f"/api/{f.name}"
                     })
@@ -90,33 +88,30 @@ def manifest(filename):
     if not filepath.exists():
         abort(404)
     
+    # ここで lol.neverland.buttonapp が確実に使われる
     bundle_id = get_bundle_id_from_ipa(filepath)
-    title = filename.replace('.ipa', '')
     
     host = request.host_url.rstrip('/')
     if host.startswith('http://'):
         host = host.replace('http://', 'https://')
         
     ipa_url = f"{host}/api/{filename}"
+    title = filename.replace('.ipa', '')
     
-    plist_dict = {
-        'items': [{
-            'assets': [{
-                'kind': 'software-package',
-                'url': ipa_url
-            }],
-            'metadata': {
-                'bundle-identifier': bundle_id,
-                'bundle-version': '1.0',
-                'kind': 'software',
-                'title': title
-            }
-        }]
-    }
-    
-    plist_data = plistlib.dumps(plist_dict)
-    return plist_data, 200, {'Content-Type': 'application/xml; charset=utf-8'}
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 3000))
-    app.run(host='0.0.0.0', port=port)
+    plist = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>items</key>
+  <array>
+    <dict>
+      <key>assets</key>
+      <array>
+        <dict>
+          <key>kind</key>
+          <string>software-package</string>
+          <key>url</key>
+          <string>{ipa_url}</string>
+        </dict>
+      </array>
+      <key>metadata</key>
