@@ -14,7 +14,6 @@ IPAS_DIR.mkdir(exist_ok=True)
 CERTS_DIR.mkdir(exist_ok=True)
 
 def get_bundle_id_from_ipa(ipa_path):
-    """IPAファイルからBundle IDを抽出。失敗時は既定値を返す"""
     try:
         with zipfile.ZipFile(ipa_path, 'r') as zip_ref:
             for name in zip_ref.namelist():
@@ -24,7 +23,6 @@ def get_bundle_id_from_ipa(ipa_path):
                         return plist_data.get('CFBundleIdentifier', 'lol.neverland.buttonapp')
     except Exception:
         pass
-    # 抽出に失敗した場合の確実なフォールバック
     return 'lol.neverland.buttonapp'
 
 @app.route('/')
@@ -88,7 +86,6 @@ def manifest(filename):
     if not filepath.exists():
         abort(404)
     
-    # ここで lol.neverland.buttonapp が確実に使われる
     bundle_id = get_bundle_id_from_ipa(filepath)
     
     host = request.host_url.rstrip('/')
@@ -98,7 +95,8 @@ def manifest(filename):
     ipa_url = f"{host}/api/{filename}"
     title = filename.replace('.ipa', '')
     
-    plist = f'''<?xml version="1.0" encoding="UTF-8"?>
+    # f-string の三重引用符問題を回避するため、.format() を使用
+    plist_template = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -115,3 +113,29 @@ def manifest(filename):
         </dict>
       </array>
       <key>metadata</key>
+      <dict>
+        <key>bundle-identifier</key>
+        <string>{bundle_id}</string>
+        <key>bundle-version</key>
+        <string>1.0</string>
+        <key>kind</key>
+        <string>software</string>
+        <key>title</key>
+        <string>{title}</string>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>"""
+    
+    plist_content = plist_template.format(
+        ipa_url=ipa_url,
+        bundle_id=bundle_id,
+        title=title
+    )
+    
+    return plist_content, 200, {'Content-Type': 'application/xml; charset=utf-8'}
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 3000))
+    app.run(host='0.0.0.0', port=port)
