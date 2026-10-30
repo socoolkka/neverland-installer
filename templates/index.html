@@ -46,10 +46,6 @@
       background-color: #007aff;
       color: #ffffff;
     }
-    .btn-install {
-      background-color: #34c759;
-      color: #ffffff;
-    }
     .loading { text-align: center; color: #86868b; padding: 20px; }
   </style>
 </head>
@@ -69,7 +65,6 @@
         if (!response.ok) throw new Error('Network error');
         const data = await response.json();
 
-        // IPA 表示
         const ipaList = document.getElementById('ipa-list');
         ipaList.innerHTML = '';
         if (data.ipas.length === 0) {
@@ -80,14 +75,12 @@
             div.className = 'file-item';
             div.innerHTML = `
               <div class="file-name">${file.name}</div>
-              <a href="${file.install_url}" class="btn btn-install">📲 iOSにインストール</a>
-              <a href="${file.download_url}" class="btn btn-download" download>⬇️ ダウンロード</a>
+              <a href="${file.download_url}" class="btn btn-download" download>⬇️ IPA ダウンロード</a>
             `;
             ipaList.appendChild(div);
           });
         }
 
-        // 証明書 表示
         const certList = document.getElementById('cert-list');
         certList.innerHTML = '';
         if (data.certs.length === 0) {
@@ -98,7 +91,7 @@
             div.className = 'file-item';
             div.innerHTML = `
               <div class="file-name">${file.name}</div>
-              <a href="${file.download_url}" class="btn btn-download" download>⬇️ ダウンロード</a>
+              <a href="${file.download_url}" class="btn btn-download" download>⬇️ 署名 ダウンロード</a>
             `;
             certList.appendChild(div);
           });
