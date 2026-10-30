@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
+    a { display: block; padding: 1rem; margin: 0.5rem 0; background: #f0f0f0; text-decoration: none; color: #333; border-radius: 8px; }
+    a:hover { background: #e0e0e0; }
+    .install { background: #007aff; color: #fff; }
+    .install:hover { background: #0051d5; }
+    h2 { border-bottom: 2px solid #333; padding-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Signing Files</h1>
+  
+  <h2>IPA (Install / Download)</h2>
+  <div id="ipa-list">
+    <!-- JSで動的に読み込むか、バックエンドでレンダリングする場合はここに展開 -->
+    <p>読み込み中...</p>
+  </div>
+
+  <h2>Certificates</h2>
+  <div id="cert-list">
+    <p>読み込み中...</p>
+  </div>
+
+  <script>
+    // バックエンドからファイル一覧を取得して表示
+    async function loadFiles() {
+      const ipaRes = await fetch('/api/ipas'); // ※app.pyに/api/ipasを追加するか、以下のようにハードコードリストを避けるならapp.py修正が必要
+      // 簡易化のため、ここでは app.py のルートでリストを渡すか、別途APIを作るのが正解。
+      // 前回同様、シンプルに全ファイルを列挙するAPIをapp.pyに足すのが一番早い。
+    }
+  </script>
+</body>
+</html>
