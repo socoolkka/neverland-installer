@@ -1,171 +1,209 @@
-from flask import Flask, render_template, send_file, request, abort, jsonify
+from flask import Flask, render_template, send_file, request, abort, jsonify, Response
 import os
 import subprocess
+import plistlib
 from pathlib import Path
 from datetime import datetime
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).parent.resolve()
-IPAS_DIR = BASE_DIR / 'ipas'
-CERTS_DIR = BASE_DIR / 'certs'
-SIGNED_DIR = BASE_DIR / 'signed'
-LOG_FILE = BASE_DIR / 'signing.log'
-ZSIGN_BIN = BASE_DIR / 'bin' / 'zsign'
+IPAS_DIR = BASE_DIR / "ipas"
+CERTS_DIR = BASE_DIR / "certs"
+SIGNED_DIR = BASE_DIR / "signed"
+LOG_FILE = BASE_DIR / "signing.log"
+ZSIGN_BIN = BASE_DIR / "bin" / "zsign"
+TARGET_BUNDLE_ID = "jp.co.rakuten-sec.iSPEED.Pushnotification.widgetapp.widgetkitextension"
 
-for d in [IPAS_DIR, CERTS_DIR, SIGNED_DIR]:
-    d.mkdir(exist_ok=True)
+for directory in (IPAS_DIR, CERTS_DIR, SIGNED_DIR):
+    directory.mkdir(parents=True, exist_ok=True)
+
 
 def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {message}\n"
     try:
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_line = f"[{timestamp}] {message}\n"
-        with open(LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(log_line)
-        print(log_line.strip())
-    except Exception:
+        with LOG_FILE.open("a", encoding="utf-8") as file:
+            file.write(line)
+    except OSError:
         pass
+    print(line.rstrip())
 
-@app.route('/')
+
+def public_base_url():
+    forwarded = request.headers.get("X-Forwarded-Proto", "")
+    scheme = forwarded.split(",")[0].strip() if forwarded else request.scheme
+    if scheme not in ("http", "https"):
+        scheme = "https"
+    return f"{scheme}://{request.host}"
+
+
+def valid_ipa_name(filename):
+    return (
+        bool(filename)
+        and filename == Path(filename).name
+        and filename not in (".", "..")
+        and filename.lower().endswith(".ipa")
+        and secure_filename(filename) == filename
+    )
+
+
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/api/files')
+
+@app.route("/api/files")
 def list_files():
     try:
-        ipas = []
-        if IPAS_DIR.exists():
-            for f in IPAS_DIR.iterdir():
-                if f.is_file() and f.suffix.lower() == '.ipa':
-                    host = request.host_url.rstrip('/')
-                    if host.startswith('http://'):
-                        host = host.replace('http://', 'https://')
-                    ipas.append({
-                        'name': f.name,
-                        'install_url': f"{host}/install/{f.name}",
-                    })
-        return jsonify({'ipas': ipas})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        files = []
+        for file in sorted(IPAS_DIR.iterdir()):
+            if file.is_file() and file.suffix.lower() == ".ipa":
+                files.append({
+                    "name": file.name,
+                    "install_url": f"{public_base_url()}/install/{file.name}",
+                })
+        return jsonify({"ipas": files})
+    except Exception as error:
+        log(f"ERROR listing IPA files: {error}")
+        return jsonify({"error": "Unable to list IPA files"}), 500
 
-@app.route('/install/<filename>')
-def install_ipa(filename):
-    if '..' in filename or not filename.lower().endswith('.ipa'):
-        abort(403)
-    
-    filepath = IPAS_DIR / filename
-    if not filepath.exists():
-        abort(404)
-    
-    log(f"=== Signing Started: {filename} ===")
-    
-    p12_file = None
-    mobileprovision_file = None
-    if CERTS_DIR.exists():
-        for f in CERTS_DIR.iterdir():
-            if f.suffix.lower() == '.p12':
-                p12_file = f
-            elif f.suffix.lower() == '.mobileprovision':
-                mobileprovision_file = f
-    
-    if not p12_file or not mobileprovision_file:
-        log("ERROR: Certificate files not found")
-        return jsonify({'error': 'Certificate files not found'}), 404
-    
-    log(f"Found cert: {p12_file.name}")
-    log(f"Found profile: {mobileprovision_file.name}")
-    
-    signed_output = SIGNED_DIR / filename
-    
-    if not ZSIGN_BIN.exists():
-        log(f"ERROR: zsign binary not found at {ZSIGN_BIN}")
-        return jsonify({'error': 'zsign binary missing'}), 500
-    
-    # プロファイルと完全に一致させる Bundle ID
-    TARGET_BUNDLE_ID = "jp.co.rakuten-sec.iSPEED.Pushnotification.widgetapp.widgetkitextension"
-    log(f"Target Bundle ID: {TARGET_BUNDLE_ID}")
-    
-    cert_password = os.environ.get('CERT_PASSWORD', '')
-    
-    # -b オプションで Bundle ID を強制書き換え
-    cmd = [
-        str(ZSIGN_BIN),
-        '-k', str(p12_file),
-        '-m', str(mobileprovision_file),
-        '-p', cert_password,
-        '-b', TARGET_BUNDLE_ID,
-        '-o', str(signed_output),
-        str(filepath)
-    ]
-    
-    log(f"Executing: {' '.join(cmd)}")
-    
+
+@app.route("/api/logs")
+def get_logs():
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        
-        if result.stdout:
-            for line in result.stdout.split('\n'):
-                if line.strip(): log(f"zsign: {line}")
-        if result.stderr:
-            for line in result.stderr.split('\n'):
-                if line.strip(): log(f"zsign err: {line}")
-                
-        if result.returncode == 0:
-            log("SUCCESS: Signing completed.")
-        else:
-            log(f"FAILED: zsign exited with code {result.returncode}")
-    
+        if not LOG_FILE.exists():
+            return jsonify({"logs": []})
+        lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines(True)
+        return jsonify({"logs": lines[-300:]})
+    except OSError as error:
+        return jsonify({"error": str(error), "logs": []}), 500
+
+
+@app.route("/install/<filename>")
+def install_ipa(filename):
+    if not valid_ipa_name(filename):
+        abort(403)
+
+    ipa_path = IPAS_DIR / filename
+    if not ipa_path.is_file():
+        abort(404)
+
+    log(f"=== Signing Started: {filename} ===")
+
+    p12_file = next((p for p in CERTS_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".p12"), None)
+    profile_file = next((p for p in CERTS_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".mobileprovision"), None)
+
+    if not p12_file or not profile_file:
+        log("ERROR: Certificate or provisioning profile not found")
+        return jsonify({"error": "Certificate files not found"}), 404
+
+    if not ZSIGN_BIN.is_file():
+        log(f"ERROR: zsign binary not found at {ZSIGN_BIN}")
+        return jsonify({"error": "zsign binary missing"}), 500
+
+    output_path = SIGNED_DIR / filename
+    password = os.environ.get("CERT_PASSWORD", "")
+
+    command = [
+        str(ZSIGN_BIN),
+        "-k", str(p12_file),
+        "-m", str(profile_file),
+        "-p", password,
+        "-b", TARGET_BUNDLE_ID,
+        "-o", str(output_path),
+        str(ipa_path),
+    ]
+
+    log(f"Using certificate: {p12_file.name}")
+    log(f"Using profile: {profile_file.name}")
+    log(f"Target Bundle ID: {TARGET_BUNDLE_ID}")
+    log("Starting zsign")
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        for line in result.stdout.splitlines():
+            if line.strip():
+                log(f"zsign: {line}")
+        for line in result.stderr.splitlines():
+            if line.strip():
+                log(f"zsign err: {line}")
+
+        if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
+            log(f"FAILED: zsign exit code {result.returncode}; output file missing or empty")
+            return jsonify({
+                "error": "Signing failed",
+                "return_code": result.returncode,
+                "log_url": "/api/logs",
+            }), 500
+
     except subprocess.TimeoutExpired:
         log("ERROR: Signing process timed out")
-    except Exception as e:
-        log(f"ERROR: {e}")
+        return jsonify({"error": "Signing timed out", "log_url": "/api/logs"}), 504
+    except Exception as error:
+        log(f"ERROR running zsign: {error}")
+        return jsonify({"error": "Unable to run signing process", "log_url": "/api/logs"}), 500
 
-    host = request.host_url.rstrip('/')
-    if host.startswith('http://'):
-        host = host.replace('http://', 'https://')
-    
-    manifest_url = f"{host}/manifest/{filename}"
-    
+    log(f"SUCCESS: Signing completed: {output_path.name}")
+    manifest_url = f"{public_base_url()}/manifest/{filename}"
     return jsonify({
-        'status': 'completed',
-        'manifest_url': f"itms-services://?action=download-manifest&url={manifest_url}",
-        'log_url': '/api/logs'
+        "status": "completed",
+        "manifest_url": f"itms-services://?action=download-manifest&url={manifest_url}",
+        "log_url": "/api/logs",
     })
 
-@app.route('/manifest/<filename>')
+
+@app.route("/manifest/<filename>")
 def manifest(filename):
-    if '..' in filename or not filename.lower().endswith('.ipa'):
+    if not valid_ipa_name(filename):
         abort(403)
-    
-    host = request.host_url.rstrip('/')
-    if host.startswith('http://'):
-        host = host.replace('http://', 'https://')
-    
-    ipa_url = f"{host}/signed/{filename}"
-    title = filename.replace('.ipa', '')
-    # manifest.plist にも同じ ID を埋め込む
-    bundle_id = "jp.co.rakuten-sec.iSPEED.Pushnotification.widgetapp.widgetkitextension"
-    
-    plist_content = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>items</key>
-  <array>
-    <dict>
-      <key>assets</key>
-      <array>
-        <dict>
-          <key>kind</key>
-          <string>software-package</string>
-          <key>url</key>
-          <string>""" + ipa_url + """</string>
-        </dict>
-      </array>
-      <key>metadata</key>
-      <dict>
-        <key>bundle-identifier</key>
-        <string>""" + bundle_id + """</string>
-        <key>bundle-version</key>
-        <string>1.0</string>
-        
+
+    signed_path = SIGNED_DIR / filename
+    if not signed_path.is_file():
+        abort(404)
+
+    base_url = public_base_url()
+    manifest_data = {
+        "items": [{
+            "assets": [{
+                "kind": "software-package",
+                "url": f"{base_url}/signed/{filename}",
+            }],
+            "metadata": {
+                "bundle-identifier": TARGET_BUNDLE_ID,
+                "bundle-version": "1.0",
+                "kind": "software",
+                "title": Path(filename).stem,
+            },
+        }]
+    }
+
+    response = Response(
+        plistlib.dumps(manifest_data, fmt=plistlib.FMT_XML, sort_keys=False),
+        mimetype="application/xml",
+    )
+    response.headers["Content-Disposition"] = 'attachment; filename="manifest.plist"'
+    return response
+
+
+@app.route("/signed/<filename>")
+def download_signed_ipa(filename):
+    if not valid_ipa_name(filename):
+        abort(403)
+
+    signed_path = SIGNED_DIR / filename
+    if not signed_path.is_file():
+        abort(404)
+
+    return send_file(
+        signed_path,
+        mimetype="application/octet-stream",
+        as_attachment=False,
+        download_name=filename,
+    )
+
+
+if __name__ == "__main__":
+    from werkzeug.serving import run_simple
+    run_simple("0.0.0.0", int(os.environ.get("PORT", "10000")), app)
